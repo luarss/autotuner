@@ -1,0 +1,13 @@
+# python
+*.egg-info
+*.pyc
+__pycache__
+
+# env
+.env
+.venv
+
+# artifacts
+service_account.json
+public.yaml
+*.log
