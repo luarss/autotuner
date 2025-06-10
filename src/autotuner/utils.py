@@ -37,16 +37,15 @@ import glob
 import json
 import os
 import re
-import yaml
 import subprocess
 import sys
-import uuid
 import time
-from multiprocessing import cpu_count
+import uuid
 from datetime import datetime
 
 import numpy as np
 import ray
+import yaml
 
 # Default scheme of a SDC constraints file
 SDC_TEMPLATE = """
@@ -83,13 +82,9 @@ def write_sdc(variables, path, sdc_original, constraints_sdc):
     for key, value in variables.items():
         if key == "CLK_PERIOD":
             if new_file.find("set clk_period") != -1:
-                new_file = re.sub(
-                    r"set clk_period .*\n(.*)", f"set clk_period {value}\n\\1", new_file
-                )
+                new_file = re.sub(r"set clk_period .*\n(.*)", f"set clk_period {value}\n\\1", new_file)
             else:
-                new_file = re.sub(
-                    r"-period [0-9\.]+ (.*)", f"-period {value} \\1", new_file
-                )
+                new_file = re.sub(r"-period [0-9\.]+ (.*)", f"-period {value} \\1", new_file)
                 new_file = re.sub(r"-waveform [{}\s0-9\.]+[\s|\n]", "", new_file)
         elif key == "UNCERTAINTY":
             if new_file.find("set uncertainty") != -1:
@@ -102,15 +97,11 @@ def write_sdc(variables, path, sdc_original, constraints_sdc):
                 new_file += f"\nset uncertainty {value}\n"
         elif key == "IO_DELAY":
             if new_file.find("set io_delay") != -1:
-                new_file = re.sub(
-                    r"set io_delay .*\n(.*)", f"set io_delay {value}\n\\1", new_file
-                )
+                new_file = re.sub(r"set io_delay .*\n(.*)", f"set io_delay {value}\n\\1", new_file)
             else:
                 new_file += f"\nset io_delay {value}\n"
         else:
-            print(
-                f"[WARN TUN-0025] {key} variable not supported in context of SDC files"
-            )
+            print(f"[WARN TUN-0025] {key} variable not supported in context of SDC files")
             continue
     file_name = path + f"/{constraints_sdc}"
     with open(file_name, "w") as file:
@@ -133,7 +124,7 @@ def write_fast_route(variables, path, platform, fr_original, fastroute_tcl):
         new_file = "set_routing_layers -signal $::env(MIN_ROUTING_LAYER)-$::env(MAX_ROUTING_LAYER)"
     for key, value in variables.items():
         if key.startswith("LAYER_ADJUST"):
-            layer = key.lstrip("LAYER_ADJUST")
+            layer = key.removeprefix("LAYER_ADJUST")
             # If there is no suffix (i.e., layer name) apply adjust to all
             # layers.
             if layer == "":
@@ -142,17 +133,13 @@ def write_fast_route(variables, path, platform, fr_original, fastroute_tcl):
                 new_file += "-$::env(MAX_ROUTING_LAYER)"
                 new_file += f" {value}"
             elif re.search(f"{layer_cmd}.*{layer}", new_file):
-                new_file = re.sub(
-                    f"({layer_cmd}.*{layer}).*\n(.*)", f"\\1 {value}\n\\2", new_file
-                )
+                new_file = re.sub(f"({layer_cmd}.*{layer}).*\n(.*)", f"\\1 {value}\n\\2", new_file)
             else:
                 new_file += f"\n{layer_cmd} {layer} {value}\n"
         elif key == "GR_SEED":
             new_file += f"\nset_global_routing_random -seed {value}\n"
         else:
-            print(
-                f"[WARN TUN-0028] {key} variable not supported in context of FastRoute TCL files"
-            )
+            print(f"[WARN TUN-0028] {key} variable not supported in context of FastRoute TCL files")
             continue
     file_name = path + f"/{fastroute_tcl}"
     with open(file_name, "w") as file:
@@ -214,7 +201,6 @@ def parse_tunable_variables():
 
 def parse_config(
     config,
-    base_dir,
     platform,
     sdc_original,
     constraints_sdc,
@@ -262,16 +248,12 @@ def parse_config(
     return options
 
 
-def run_command(
-    args, cmd, timeout=None, stderr_file=None, stdout_file=None, fail_fast=False
-):
+def run_command(args, cmd, timeout=None, stderr_file=None, stdout_file=None, fail_fast=False):
     """
     Wrapper for subprocess.run
     Allows to run shell command, control print and exceptions.
     """
-    process = subprocess.run(
-        cmd, timeout=timeout, capture_output=True, text=True, check=False, shell=True
-    )
+    process = subprocess.run(cmd, timeout=timeout, capture_output=True, text=True, check=False, shell=True)
     if stderr_file is not None and process.stderr != "":
         with open(stderr_file, "a") as file:
             file.write(f"\n\n{cmd}\n{process.stderr}")
@@ -299,19 +281,9 @@ def openroad(
     """
     # Make sure path ends in a slash, i.e., is a folder
     flow_variant = f"{args.experiment}/{flow_variant}"
-    log_path = os.path.abspath(
-        os.path.join(base_dir, f"flow/logs/{args.platform}/{args.design}", flow_variant)
-    )
-    report_path = os.path.abspath(
-        os.path.join(
-            base_dir, f"flow/reports/{args.platform}/{args.design}", flow_variant
-        )
-    )
-    results_path = os.path.abspath(
-        os.path.join(
-            base_dir, f"flow/results/{args.platform}/{args.design}", flow_variant
-        )
-    )
+    log_path = os.path.abspath(os.path.join(base_dir, f"flow/logs/{args.platform}/{args.design}", flow_variant))
+    report_path = os.path.abspath(os.path.join(base_dir, f"flow/reports/{args.platform}/{args.design}", flow_variant))
+    results_path = os.path.abspath(os.path.join(base_dir, f"flow/results/{args.platform}/{args.design}", flow_variant))
     os.makedirs(log_path, exist_ok=True)
     os.makedirs(report_path, exist_ok=True)
     os.makedirs(results_path, exist_ok=True)
@@ -425,7 +397,7 @@ def read_config(file_name, mode, algorithm):
         print(os.path.abspath(path))
         if not os.path.isfile(os.path.abspath(path)):
             return ""
-        with open(os.path.abspath(path), "r") as file:
+        with open(os.path.abspath(path)) as file:
             ret = file.read()
         return ret
 
@@ -433,8 +405,9 @@ def read_config(file_name, mode, algorithm):
         return [*this["minmax"], this["step"]]
 
     def apply_condition(config, data):
-        from ray import tune
         import random
+
+        from ray import tune
 
         # TODO: tune.sample_from only supports random search algorithm.
         # To make conditional parameter for the other algorithms, different
@@ -445,9 +418,7 @@ def read_config(file_name, mode, algorithm):
         dp_pad_step = data["CELL_PAD_IN_SITES_DETAIL_PLACEMENT"]["step"]
         if dp_pad_step == 1:
             config["CELL_PAD_IN_SITES_DETAIL_PLACEMENT"] = tune.sample_from(
-                lambda spec: np.random.randint(
-                    dp_pad_min, spec.config.CELL_PAD_IN_SITES_GLOBAL_PLACEMENT + 1
-                )
+                lambda spec: np.random.randint(dp_pad_min, spec.config.CELL_PAD_IN_SITES_GLOBAL_PLACEMENT + 1)
             )
         if dp_pad_step > 1:
             config["CELL_PAD_IN_SITES_DETAIL_PLACEMENT"] = tune.sample_from(
@@ -502,9 +473,7 @@ def read_config(file_name, mode, algorithm):
         elif this["type"] == "float":
             if this["step"] == 1:
                 dict_["type"] = "choice"
-                dict_["values"] = tune.choice(
-                    np.ndarray.tolist(np.arange(min_, max_, this["step"]))
-                )
+                dict_["values"] = tune.choice(np.ndarray.tolist(np.arange(min_, max_, this["step"])))
                 dict_["value_type"] = "float"
             else:
                 dict_["type"] = "range"
@@ -512,7 +481,7 @@ def read_config(file_name, mode, algorithm):
                 dict_["value_type"] = "float"
         return dict_
 
-    def read_tune_pbt(name, this):
+    def read_tune_pbt(name, this):  # noqa: ARG001
         """
         PBT format: https://docs.ray.io/en/releases-2.9.3/tune/examples/pbt_guide.html
         Note that PBT does not support step values.
@@ -534,14 +503,11 @@ def read_config(file_name, mode, algorithm):
     try:
         with open(file_name) as file:
             data = json.load(file)
-    except json.JSONDecodeError:
-        raise ValueError(f"Invalid JSON file: {file_name}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON file: {file_name}") from e
     sdc_file = ""
     fr_file = ""
-    if mode == "tune" and algorithm == "ax":
-        config = list()
-    else:
-        config = dict()
+    config = list() if mode == "tune" and algorithm == "ax" else dict()
     for key, value in data.items():
         if key == "best_result":
             continue
@@ -592,9 +558,7 @@ def prepare_ray_server(args):
     # Common variables used for local and remote runs.
     orfs_dir = getattr(args, "orfs", None)
     orfs_flow_dir = os.path.abspath(
-        os.path.join(orfs_dir, "flow")
-        if orfs_dir
-        else os.path.join(os.path.dirname(__file__), "../../../../flow")
+        os.path.join(orfs_dir, "flow") if orfs_dir else os.path.join(os.path.dirname(__file__), "../../../../flow")
     )
     local_dir = f"logs/{args.platform}/{args.design}"
     local_dir = os.path.join(orfs_flow_dir, local_dir)

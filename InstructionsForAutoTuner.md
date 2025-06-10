@@ -37,7 +37,7 @@ as shown below:
 
 ## Input JSON structure
 
-Sample JSON [file](https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts/blob/master/flow/designs/sky130hd/aes/autotuner.json) for Sky130HD `aes` design:  
+Sample JSON [file](https://github.com/The-OpenROAD-Project/OpenROAD-flow-scripts/blob/master/flow/designs/sky130hd/aes/autotuner.json) for Sky130HD `aes` design:
 
 Alternatively, here is a minimal example to get started:
 
@@ -101,7 +101,7 @@ For Global Routing parameters that are set on `fastroute.tcl` you can use:
 ### General Information
 
 The `autotuner.distributed` module uses [Ray's](https://docs.ray.io/en/latest/index.html) job scheduling and management to
-fully utilize available hardware resources from a single server 
+fully utilize available hardware resources from a single server
 configuration, on-premise or over the cloud with multiple CPUs.
 
 The two modes of operation:
@@ -110,7 +110,7 @@ The two modes of operation:
 
 The `sweep` mode is useful when we want to isolate or test a single or very few
 parameters. On the other hand, `tune` is more suitable for finding
-the best combination of a complex and large number of flow 
+the best combination of a complex and large number of flow
 parameters.
 
 ```{note}
@@ -122,7 +122,7 @@ The order of the parameters matter. Arguments `--design`, `--platform` and
 The following commands should be run from `./tools/AutoTuner`.
 ```
 
-#### Tune only 
+#### Tune only
 
 * AutoTuner: `openroad_autotuner tune -h`
 
@@ -133,7 +133,7 @@ openroad_autotuner --design gcd --platform sky130hd \
                        --config ../../flow/designs/sky130hd/gcd/autotuner.json \
                        tune --samples 5
 ```
-#### Sweep only 
+#### Sweep only
 
 * Parameter sweeping: `openroad_autotuner sweep -h`
 

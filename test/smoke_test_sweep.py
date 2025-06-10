@@ -32,10 +32,11 @@
 ## POSSIBILITY OF SUCH DAMAGE.
 ###############################################################################
 
-import unittest
-import subprocess
-import os
 import json
+import os
+import subprocess
+import unittest
+
 from .autotuner_test_utils import AutoTunerTestUtils, accepted_rc
 
 cur_dir = os.path.dirname(os.path.abspath(__file__))
@@ -46,20 +47,15 @@ class BaseSweepSmokeTest(unittest.TestCase):
     design = ""
 
     def setUp(self):
-        self.config = os.path.abspath(
-            os.path.join(cur_dir, "../src/autotuner/distributed-sweep-example.json")
-        )
+        self.config = os.path.abspath(os.path.join(cur_dir, "../src/autotuner/distributed-sweep-example.json"))
         # make sure this json only has 1 key called "CTS_CLUSTER_SIZE" and 4 possible values
         with open(self.config) as f:
             contents = json.load(f)
             assert len(contents.keys()) == 1, "Must be size 1"
             assert "CTS_CLUSTER_SIZE" in contents, "Must have key CTS_CLUSTER_SIZE"
-            assert (
-                contents["CTS_CLUSTER_SIZE"]["minmax"][1]
-                - contents["CTS_CLUSTER_SIZE"]["minmax"][0]
-            ) / contents["CTS_CLUSTER_SIZE"][
-                "step"
-            ] == 4, "Must have only 4 possible values"
+            assert (contents["CTS_CLUSTER_SIZE"]["minmax"][1] - contents["CTS_CLUSTER_SIZE"]["minmax"][0]) / contents[
+                "CTS_CLUSTER_SIZE"
+            ]["step"] == 4, "Must have only 4 possible values"
 
         # limit jobs because ray.get() does not terminate if jobs > number of samples
         core = os.cpu_count()

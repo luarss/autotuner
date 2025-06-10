@@ -33,15 +33,16 @@
 ##
 ###############################################################################
 
+import argparse
 import glob
 import json
+import os
+import re
+import sys
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import re
-import os
-import argparse
-import sys
 
 # Only does plotting for AutoTunerBase variants
 AT_REGEX = r"variant-AutoTunerBase-([\w-]+)-\w+"
@@ -76,14 +77,12 @@ def load_dir(dir: str) -> pd.DataFrame:
     params = []
     failed = []
     for params_fname in glob.glob(f"{dir}/*/params.json"):
-        metrics_fname = params_fname.replace("params.json", "metrics.json").replace(
-            "ray", "or-0"
-        )
+        metrics_fname = params_fname.replace("params.json", "metrics.json").replace("ray", "or-0")
         try:
-            with open(params_fname, "r") as f:
+            with open(params_fname) as f:
                 _dict = json.load(f)
                 _dict["trial_id"] = re.search(AT_REGEX, params_fname).group(1)
-            with open(metrics_fname, "r") as f:
+            with open(metrics_fname) as f:
                 metrics = json.load(f)
                 ws = metrics["finish"]["timing__setup__ws"]
                 metrics["worst_slack"] = ws
@@ -100,9 +99,7 @@ def load_dir(dir: str) -> pd.DataFrame:
     try:
         progress_df = progress_df.merge(params_df, on="trial_id")
     except KeyError:
-        print(
-            "Unable to merge DFs due to missing trial_id in params.json (possibly due to failed trials.)"
-        )
+        print("Unable to merge DFs due to missing trial_id in params.json (possibly due to failed trials.)")
         sys.exit(1)
 
     # Print failed, if any
@@ -145,9 +142,7 @@ def preprocess(df: pd.DataFrame) -> pd.DataFrame:
         df["timestamp"] -= df["timestamp"].min()
         return df
     except KeyError as e:
-        print(
-            f"KeyError: {e} in the DataFrame. Dataframe does not contain necessary columns."
-        )
+        print(f"KeyError: {e} in the DataFrame. Dataframe does not contain necessary columns.")
         sys.exit(1)
 
 
@@ -203,12 +198,8 @@ def main(platform: str, design: str, experiment: str):
         None
     """
 
-    results_dir = os.path.join(
-        root_dir, f"./flow/logs/{platform}/{design}/{experiment}"
-    )
-    img_dir = os.path.join(
-        root_dir, f"./flow/reports/images/{platform}/{design}/{experiment}"
-    )
+    results_dir = os.path.join(root_dir, f"./flow/logs/{platform}/{design}/{experiment}")
+    img_dir = os.path.join(root_dir, f"./flow/reports/images/{platform}/{design}/{experiment}")
     print("Processing results from", results_dir)
     os.makedirs(img_dir, exist_ok=True)
     df = load_dir(results_dir)
@@ -227,8 +218,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Plot AutoTuner results.")
     parser.add_argument("--platform", type=str, help="Platform name.", required=True)
     parser.add_argument("--design", type=str, help="Design name.", required=True)
-    parser.add_argument(
-        "--experiment", type=str, help="Experiment name.", required=True
-    )
+    parser.add_argument("--experiment", type=str, help="Experiment name.", required=True)
     args = parser.parse_args()
     main(platform=args.platform, design=args.design, experiment=args.experiment)

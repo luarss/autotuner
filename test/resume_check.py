@@ -32,13 +32,13 @@
 ## POSSIBILITY OF SUCH DAMAGE.
 ###############################################################################
 
-import unittest
-import subprocess
 import os
+import subprocess
 import time
-from .autotuner_test_utils import AutoTunerTestUtils, accepted_rc
-
+import unittest
 from contextlib import contextmanager
+
+from .autotuner_test_utils import AutoTunerTestUtils, accepted_rc
 
 cur_dir = os.path.dirname(os.path.abspath(__file__))
 src_dir = os.path.join(cur_dir, "../src")
@@ -67,9 +67,7 @@ class ResumeCheck(unittest.TestCase):
     iterations = 2
 
     def setUp(self):
-        self.config = os.path.join(
-            orfs_dir, "designs", self.platform, self.design, "autotuner.json"
-        )
+        self.config = os.path.join(orfs_dir, "designs", self.platform, self.design, "autotuner.json")
         self.jobs = self.samples
         self.num_cpus = os.cpu_count()
 
@@ -78,7 +76,7 @@ class ResumeCheck(unittest.TestCase):
         #  We can set resources_per_trial = NUM_CORES/5 = 3.2 (fractional resources_per_trial are allowed!)
 
         # Cast to 1 decimal place
-        res_per_trial = float("{:.1f}".format(self.num_cpus / self.samples))
+        res_per_trial = float(f"{self.num_cpus / self.samples:.1f}")
         options = ["", "--resume"]
         self.exec = AutoTunerTestUtils.get_exec_cmd()
         self.commands = [

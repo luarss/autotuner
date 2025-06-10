@@ -32,9 +32,10 @@
 ## POSSIBILITY OF SUCH DAMAGE.
 ###############################################################################
 
-import unittest
-import subprocess
 import os
+import subprocess
+import unittest
+
 from .autotuner_test_utils import AutoTunerTestUtils, accepted_rc
 
 cur_dir = os.path.dirname(os.path.abspath(__file__))

@@ -62,20 +62,19 @@ Parameter sweeping:
 import argparse
 import json
 import os
-import sys
 import random
-from itertools import product
-from uuid import uuid4 as uuid
+import sys
 from collections import namedtuple
+from itertools import product
 from multiprocessing import cpu_count
+from uuid import uuid4 as uuid
 
 import numpy as np
-import torch
-
 import ray
+import torch
+from ax.service.ax_client import AxClient
 from ray import tune
-from ray.tune.schedulers import AsyncHyperBandScheduler
-from ray.tune.schedulers import PopulationBasedTraining
+from ray.tune.schedulers import AsyncHyperBandScheduler, PopulationBasedTraining
 from ray.tune.search import ConcurrencyLimiter
 from ray.tune.search.ax import AxSearch
 from ray.tune.search.basic_variant import BasicVariantGenerator
@@ -83,17 +82,15 @@ from ray.tune.search.hyperopt import HyperOptSearch
 from ray.tune.search.optuna import OptunaSearch
 from ray.util.queue import Queue
 
-from ax.service.ax_client import AxClient
-
 from autotuner.utils import (
-    openroad,
-    consumer,
-    parse_config,
-    read_config,
-    read_metrics,
-    prepare_ray_server,
     CONSTRAINTS_SDC,
     FASTROUTE_TCL,
+    consumer,
+    openroad,
+    parse_config,
+    prepare_ray_server,
+    read_config,
+    read_metrics,
 )
 
 # Name of the final metric
@@ -101,9 +98,7 @@ METRIC = "metric"
 # The worst of optimized metric
 ERROR_METRIC = 9e99
 # Path to the FLOW_HOME directory
-ORFS_FLOW_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "../../../../flow")
-)
+ORFS_FLOW_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../flow"))
 # Global variable for args
 args = None
 
@@ -154,9 +149,7 @@ class AutoTunerBase(tune.Trainable):
             install_path=INSTALL_PATH,
         )
         self.step_ += 1
-        (score, effective_clk_period, num_drc) = self.evaluate(
-            read_metrics(metrics_file)
-        )
+        (score, effective_clk_period, num_drc) = self.evaluate(read_metrics(metrics_file))
         # Feed the score back to Tune.
         # return must match 'metric' used in tune.run()
         return {
@@ -195,10 +188,7 @@ class AutoTunerBase(tune.Trainable):
     def _is_valid_padding(self, config):
         """Returns True if global padding >= detail padding"""
 
-        if (
-            "CELL_PAD_IN_SITES_GLOBAL_PLACEMENT" in config
-            and "CELL_PAD_IN_SITES_DETAIL_PLACEMENT" in config
-        ):
+        if "CELL_PAD_IN_SITES_GLOBAL_PLACEMENT" in config and "CELL_PAD_IN_SITES_DETAIL_PLACEMENT" in config:
             global_padding = config["CELL_PAD_IN_SITES_GLOBAL_PLACEMENT"]
             detail_padding = config["CELL_PAD_IN_SITES_DETAIL_PLACEMENT"]
             if global_padding < detail_padding:
@@ -262,9 +252,7 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser()
 
-    subparsers = parser.add_subparsers(
-        help="mode of execution", dest="mode", required=True
-    )
+    subparsers = parser.add_subparsers(help="mode of execution", dest="mode", required=True)
     tune_parser = subparsers.add_parser("tune")
     _ = subparsers.add_parser("sweep")
 
@@ -297,8 +285,7 @@ def parse_arguments():
         type=str,
         metavar="<str>",
         default="test",
-        help="Experiment name. This parameter is used to prefix the"
-        " FLOW_VARIANT and to set the Ray log destination.",
+        help="Experiment name. This parameter is used to prefix the FLOW_VARIANT and to set the Ray log destination.",
     )
     parser.add_argument(
         "--timeout",
@@ -416,18 +403,12 @@ def parse_arguments():
         args.algorithm = args.algorithm.lower()
         # Validation of arguments
         if args.eval == "ppa-improv" and args.reference is None:
-            print(
-                '[ERROR TUN-0006] The argument "--eval ppa-improv"'
-                ' requires that "--reference <FILE>" is also given.'
-            )
+            print('[ERROR TUN-0006] The argument "--eval ppa-improv" requires that "--reference <FILE>" is also given.')
             sys.exit(7)
 
         # Check for experiment name and resume flag.
         if args.resume and args.experiment == "test":
-            print(
-                '[ERROR TUN-0031] The flag "--resume"'
-                ' requires that "--experiment NAME" is also given.'
-            )
+            print('[ERROR TUN-0031] The flag "--resume" requires that "--experiment NAME" is also given.')
             sys.exit(1)
 
     # If the experiment name is the default, add a UUID to the end.
@@ -443,17 +424,13 @@ def parse_arguments():
     return args
 
 
-def set_algorithm(
-    algorithm_name, experiment_name, best_params, seed, perturbation, jobs, config
-):
+def set_algorithm(algorithm_name, experiment_name, best_params, seed, perturbation, jobs, config):
     """
     Configure search algorithm.
     """
     # Pre-set seed if user sets seed to 0
     if seed == 0:
-        print(
-            "Warning: you have chosen not to set a seed. Do you wish to continue? (y/n)"
-        )
+        print("Warning: you have chosen not to set a seed. Do you wish to continue? (y/n)")
         if input().lower() != "y":
             sys.exit(0)
         seed = None
