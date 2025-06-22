@@ -81,10 +81,8 @@ from ray.tune.search.optuna import OptunaSearch
 from ray.util.queue import Queue
 
 from autotuner.cli import parse_arguments
-from autotuner.core.config import TuneEvalFunction
+from autotuner.core.config import Settings
 from autotuner.utils import (
-    CONSTRAINTS_SDC,
-    FASTROUTE_TCL,
     consumer,
     openroad,
     parse_config,
@@ -97,22 +95,25 @@ class AutoTunerBase(tune.Trainable):
     AutoTuner base class for experiments.
     """
 
-    def setup(self, config):
+    def setup(self, config: dict, settings: Settings | None = None):
         """
         Setup current experiment step.
         """
         # We create the following directory structure:
         #      1/     2/         3/       4/           5/
         # <repo>/<logs>/<platform>/<design>/<experiment/<cwd>
-        self.repo_dir = os.path.abspath(LOCAL_DIR + "/../" * 4)
+        if settings is None:
+            raise ValueError("[ERROR TUN-0004] Settings must be provided.")
+        self.settings = settings
+        local_dir_str = str(self.settings.local_dir) if self.settings.local_dir is not None else ""
+        self.repo_dir = os.path.abspath(os.path.join(local_dir_str, *[".."] * 4))
         self.parameters = parse_config(
             config=config,
-            base_dir=self.repo_dir,
-            platform=args.platform,
-            sdc_original=SDC_ORIGINAL,
-            constraints_sdc=CONSTRAINTS_SDC,
-            fr_original=FR_ORIGINAL,
-            fastroute_tcl=FASTROUTE_TCL,
+            platform=self.settings.platform,
+            sdc_original=self.settings.sdc_original,
+            constraints_sdc=self.settings.constraints_sdc,
+            fr_original=self.settings.fr_original,
+            fastroute_tcl=self.settings.fastroute_tcl,
             path=os.getcwd(),
         )
         self.step_ = 0
@@ -128,21 +129,21 @@ class AutoTunerBase(tune.Trainable):
 
         # if not a valid config, then don't run and pass back an error
         if not self.is_valid_config:
-            return {METRIC: ERROR_METRIC, "effective_clk_period": "-", "num_drc": "-"}
+            return {self.settings.metric: self.settings.error_metric, "effective_clk_period": "-", "num_drc": "-"}
         self._variant = f"{self.variant}-{self.step_}"
         metrics_file = openroad(
-            args=args,
+            args=self.settings,
             base_dir=self.repo_dir,
             parameters=self.parameters,
             flow_variant=self._variant,
-            install_path=INSTALL_PATH,
+            install_path=self.settings.install_path,
         )
         self.step_ += 1
         (score, effective_clk_period, num_drc) = self.evaluate(read_metrics(metrics_file))
         # Feed the score back to Tune.
         # return must match 'metric' used in tune.run()
         return {
-            METRIC: score,
+            self.settings.metric: score,
             "effective_clk_period": effective_clk_period,
             "num_drc": num_drc,
         }
@@ -156,7 +157,7 @@ class AutoTunerBase(tune.Trainable):
         error = "ERR" in metrics.values()
         not_found = "N/A" in metrics.values()
         if error or not_found:
-            return (ERROR_METRIC, "-", "-")
+            return (self.settings.error_metric, "-", "-")
         effective_clk_period = metrics["clk_period"] - metrics["worst_slack"]
         num_drc = metrics["num_drc"]
         gamma = effective_clk_period / 10
@@ -193,8 +194,14 @@ class PPAImprov(AutoTunerBase):
     PPAImprov
     """
 
-    @classmethod
-    def get_ppa(cls, metrics):
+    def setup(self, config: dict, settings: Settings | None = None):
+        """Load reference metrics during setup."""
+        super().setup(config)
+        if settings is None:
+            raise ValueError("[ERROR TUN-0005] Settings must be provided.")
+        self.settings = settings
+
+    def get_ppa(self, metrics: dict):
         """
         Compute PPA term for evaluate.
         """
@@ -204,16 +211,16 @@ class PPAImprov(AutoTunerBase):
         if metrics["worst_slack"] < 0:
             eff_clk_period -= metrics["worst_slack"]
 
-        eff_clk_period_ref = reference["clk_period"]
-        if reference["worst_slack"] < 0:
-            eff_clk_period_ref -= reference["worst_slack"]
+        eff_clk_period_ref = self.settings.tune.reference_dict["clk_period"]
+        if self.settings.tune.reference_dict["worst_slack"] < 0:
+            eff_clk_period_ref -= self.settings.tune.reference_dict["worst_slack"]
 
         def percent(x_1, x_2):
             return (x_1 - x_2) / x_1 * 100
 
         performance = percent(eff_clk_period_ref, eff_clk_period)
-        power = percent(reference["total_power"], metrics["total_power"])
-        area = percent(100 - reference["final_util"], 100 - metrics["final_util"])
+        power = percent(self.settings.tune.reference_dict["total_power"], metrics["total_power"])
+        area = percent(100 - self.settings.tune.reference_dict["final_util"], 100 - metrics["final_util"])
 
         # Lower values of PPA are better.
         ppa_upper_bound = (coeff_perform + coeff_power + coeff_area) * 100
@@ -223,10 +230,10 @@ class PPAImprov(AutoTunerBase):
         return ppa_upper_bound - ppa
 
     def evaluate(self, metrics):
-        error = "ERR" in metrics.values() or "ERR" in reference.values()
-        not_found = "N/A" in metrics.values() or "N/A" in reference.values()
+        error = "ERR" in metrics.values() or "ERR" in self.settings.tune.reference_dict.values()
+        not_found = "N/A" in metrics.values() or "N/A" in self.settings.tune.reference_dict.values()
         if error or not_found:
-            return (ERROR_METRIC, "-", "-")
+            return (self.settings.error_metric, "-", "-")
         ppa = self.get_ppa(metrics)
         gamma = ppa / 10
         score = ppa * (self.step_ / 100) ** (-1) + (gamma * metrics["num_drc"])
@@ -307,17 +314,18 @@ def set_best_params(platform, design):
     return params
 
 
-def set_training_class(function: TuneEvalFunction, args):
+def set_training_class(settings: Settings):
     """
     Set training class.
     """
-    if function == "default":
-        return tune.with_parameters(AutoTunerBase, settings=args)
-    elif function == "ppa-improv":
-        return tune.with_parameters(PPAImprov, settings=args)
+    if settings.tune.eval == "default":
+        return tune.with_parameters(AutoTunerBase, settings=settings)
+    elif settings.tune.eval == "ppa-improv":
+        return tune.with_parameters(PPAImprov, settings=settings)
     return None
 
 
+# TODO: Make this remote function take in arguments.
 @ray.remote
 def save_best(results):
     """
@@ -333,19 +341,19 @@ def save_best(results):
     print(f"[INFO TUN-0003] Best parameters written to {new_best_path}")
 
 
-def sweep():
+def sweep(settings: Settings):
     """Run sweep of parameters"""
-    if args.server is not None:
+    if settings.server is not None:
         # For remote sweep we create the following directory structure:
         #      1/     2/         3/       4/
         # <repo>/<logs>/<platform>/<design>/
-        repo_dir = os.path.abspath(LOCAL_DIR + "/../" * 4)
+        repo_dir = os.path.abspath(str(settings.local_dir) + "/../" * 4)
     else:
-        repo_dir = os.path.abspath(os.path.join(ORFS_FLOW_DIR, ".."))
-    print(f"[INFO TUN-0012] Log folder {LOCAL_DIR}.")
+        repo_dir = os.path.abspath(os.path.join(str(settings.orfs_flow_dir), ".."))
+    print(f"[INFO TUN-0012] Log folder {str(settings.local_dir)}.")
     queue = Queue()
     parameter_list = list()
-    for name, content in config_dict.items():
+    for name, content in settings.tune.config_dict.items():
         if not isinstance(content, list):
             print(f"[ERROR TUN-0015] {name} sweep is not supported.")
             sys.exit(1)
@@ -358,20 +366,21 @@ def sweep():
         temp = dict()
         for value in parameter:
             temp.update(value)
-        queue.put([args, repo_dir, temp, SDC_ORIGINAL, FR_ORIGINAL, INSTALL_PATH])
-    workers = [consumer.remote(queue) for _ in range(args.jobs)]
+        queue.put([settings, repo_dir, temp, settings.sdc_original, settings.fr_original, settings.install_path])
+    workers = [consumer.remote(queue) for _ in range(settings.jobs)]
     print("[INFO TUN-0009] Waiting for results.")
     ray.get(workers)
     print("[INFO TUN-0010] Sweep complete.")
 
 
 def main():
+    # TODO -rename args to settings everywhere.
     args = parse_arguments()
 
     if args.mode == "tune":
         best_params = set_best_params(args.platform, args.design)
         search_algo = set_algorithm(args, best_params)
-        TrainClass = set_training_class(args.tune.eval)
+        TrainClass = set_training_class(args)
         tune_args = dict(
             name=args.experiment,
             metric=args.metric,
@@ -406,7 +415,7 @@ def main():
             print("[ERROR TUN-0016] No successful runs found.")
             sys.exit(16)
     elif args.mode == "sweep":
-        sweep()
+        sweep(args)
 
 
 if __name__ == "__main__":

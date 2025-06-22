@@ -49,7 +49,9 @@ class Settings(BaseSettings):
     local_dir: DirectoryPath | None = None
     install_path: DirectoryPath | None = None
     sdc_original: FilePath | None = None
+    constraints_sdc: str = "constraint.sdc"
     fr_original: FilePath | None = None
+    fastroute_tcl: str = "fastroute.tcl"
 
     # Design Config
     design: str = "gcd"

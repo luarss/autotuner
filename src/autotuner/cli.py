@@ -4,7 +4,7 @@ from multiprocessing import cpu_count
 
 import numpy as np
 
-from autotuner.core.config import Settings, SweepConfig, TuneConfig, TuneEvalValue
+from autotuner.core.config import Settings, SweepConfig, TuneConfig, TuneEvalFunction
 from autotuner.utils import prepare_ray_server, read_config
 
 
@@ -206,7 +206,7 @@ def parse_arguments() -> Settings:
     args_dict["install_path"] = INSTALL_PATH
 
     # Process reference
-    if args.eval == TuneEvalValue.PPA_IMPROV:
+    if args.eval == TuneEvalFunction.PPA_IMPROV:
         args_dict["reference_dict"] = os.path.abspath(args.reference)
 
     # Validate using Pydantic
