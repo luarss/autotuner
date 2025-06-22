@@ -65,6 +65,7 @@ import random
 import sys
 from collections import namedtuple
 from itertools import product
+from multiprocessing import cpu_count
 
 import numpy as np
 import ray
@@ -80,25 +81,15 @@ from ray.tune.search.optuna import OptunaSearch
 from ray.util.queue import Queue
 
 from autotuner.cli import parse_arguments
+from autotuner.core.config import TuneEvalFunction
 from autotuner.utils import (
     CONSTRAINTS_SDC,
     FASTROUTE_TCL,
     consumer,
     openroad,
     parse_config,
-    prepare_ray_server,
-    read_config,
     read_metrics,
 )
-
-# Name of the final metric
-METRIC = "metric"
-# The worst of optimized metric
-ERROR_METRIC = 9e99
-# Path to the FLOW_HOME directory
-ORFS_FLOW_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../flow"))
-# Global variable for args
-args = None
 
 
 class AutoTunerBase(tune.Trainable):
@@ -244,57 +235,62 @@ class PPAImprov(AutoTunerBase):
         return (score, effective_clk_period, num_drc)
 
 
-def set_algorithm(algorithm_name, experiment_name, best_params, seed, perturbation, jobs, config):
+def set_algorithm(args, best_params):
     """
     Configure search algorithm.
     """
     # Pre-set seed if user sets seed to 0
-    if seed == 0:
+    if args.seed == 0:
         print("Warning: you have chosen not to set a seed. Do you wish to continue? (y/n)")
         if input().lower() != "y":
             sys.exit(0)
-        seed = None
+        args.seed = None
     else:
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-        random.seed(seed)
+        torch.manual_seed(args.seed)
+        np.random.seed(args.seed)
+        random.seed(args.seed)
 
-    if algorithm_name == "hyperopt":
+    if args.tune.algorithm == "hyperopt":
         algorithm = HyperOptSearch(
             points_to_evaluate=best_params,
-            random_state_seed=seed,
+            random_state_seed=args.seed,
         )
-    elif algorithm_name == "ax":
+    elif args.tune.algorithm == "ax":
         ax_client = AxClient(
             enforce_sequential_optimization=False,
-            random_seed=seed,
+            random_seed=args.seed,
         )
         AxClientMetric = namedtuple("AxClientMetric", "minimize")
         ax_client.create_experiment(
-            name=experiment_name,
-            parameters=config,
-            objectives={METRIC: AxClientMetric(minimize=True)},
+            name=args.experiment,
+            parameters=args.tune.config_dict,
+            objectives={args.metric: AxClientMetric(minimize=True)},
         )
         algorithm = AxSearch(ax_client=ax_client, points_to_evaluate=best_params)
-    elif algorithm_name == "optuna":
-        algorithm = OptunaSearch(points_to_evaluate=best_params, seed=seed)
-    elif algorithm_name == "pbt":
+    elif args.tune.algorithm == "optuna":
+        algorithm = OptunaSearch(points_to_evaluate=best_params, seed=args.seed)
+    elif args.tune.algorithm == "pbt":
         print("Warning: PBT does not support seed values. seed will be ignored.")
         algorithm = PopulationBasedTraining(
             time_attr="training_iteration",
-            perturbation_interval=perturbation,
-            hyperparam_mutations=config,
+            perturbation_interval=args.tune.perturbation,
+            hyperparam_mutations=args.tune.config_dict,
             synch=True,
         )
-    elif algorithm_name == "random":
+    elif args.tune.algorithm == "random":
         algorithm = BasicVariantGenerator(
-            max_concurrent=jobs,
-            random_state=seed,
+            max_concurrent=args.jobs,
+            random_state=args.seed,
+        )
+    else:
+        raise ValueError(
+            f"[ERROR TUN-0001] Unknown algorithm {args.tune.algorithm}. "
+            "Supported algorithms: hyperopt, ax, optuna, pbt, random."
         )
 
     # A wrapper algorithm for limiting the number of concurrent trials.
-    if algorithm_name not in ["random", "pbt"]:
-        algorithm = ConcurrencyLimiter(algorithm, max_concurrent=jobs)
+    if args.tune.algorithm not in ["random", "pbt"]:
+        algorithm = ConcurrencyLimiter(algorithm, max_concurrent=args.jobs)
 
     return algorithm
 
@@ -311,14 +307,14 @@ def set_best_params(platform, design):
     return params
 
 
-def set_training_class(function):
+def set_training_class(function: TuneEvalFunction, args):
     """
     Set training class.
     """
     if function == "default":
-        return AutoTunerBase
-    if function == "ppa-improv":
-        return PPAImprov
+        return tune.with_parameters(AutoTunerBase, settings=args)
+    elif function == "ppa-improv":
+        return tune.with_parameters(PPAImprov, settings=args)
     return None
 
 
@@ -370,55 +366,35 @@ def sweep():
 
 
 def main():
-    global args, SDC_ORIGINAL, FR_ORIGINAL, LOCAL_DIR, INSTALL_PATH, ORFS_FLOW_DIR, config_dict, reference, best_params
     args = parse_arguments()
-
-    # Read config and original files before handling where to run in case we
-    # need to upload the files.
-    config_dict, SDC_ORIGINAL, FR_ORIGINAL = read_config(
-        os.path.abspath(args.config), args.mode, getattr(args, "algorithm", None)
-    )
-
-    LOCAL_DIR, ORFS_FLOW_DIR, INSTALL_PATH = prepare_ray_server(args)
 
     if args.mode == "tune":
         best_params = set_best_params(args.platform, args.design)
-        search_algo = set_algorithm(
-            args.algorithm,
-            args.experiment,
-            best_params,
-            args.seed,
-            args.perturbation,
-            args.jobs,
-            config_dict,
-        )
-        TrainClass = set_training_class(args.eval)
-        # PPAImprov requires a reference file to compute training scores.
-        if args.eval == "ppa-improv":
-            reference = read_metrics(args.reference)
-
+        search_algo = set_algorithm(args, best_params)
+        TrainClass = set_training_class(args.tune.eval)
         tune_args = dict(
             name=args.experiment,
-            metric=METRIC,
+            metric=args.metric,
             mode="min",
-            num_samples=args.samples,
+            num_samples=args.tune.samples,
             fail_fast=False,
-            storage_path=LOCAL_DIR,
-            resume=args.resume,
-            stop={"training_iteration": args.iterations},
-            resources_per_trial={"cpu": os.cpu_count() / args.jobs},
+            storage_path=args.local_dir,
+            resume=args.tune.resume,
+            stop={"training_iteration": args.tune.iterations},
+            resources_per_trial={"cpu": cpu_count() / args.jobs},
             log_to_file=["trail-out.log", "trail-err.log"],
             trial_name_creator=lambda x: f"variant-{x.trainable_name}-{x.trial_id}-ray",
             trial_dirname_creator=lambda x: f"variant-{x.trainable_name}-{x.trial_id}-ray",
+            settings=args,
         )
-        if args.algorithm == "pbt":
+        if args.tune.algorithm == "pbt":
             os.environ["TUNE_MAX_PENDING_TRIALS_PG"] = str(args.jobs)
             tune_args["scheduler"] = search_algo
         else:
             tune_args["search_alg"] = search_algo
             tune_args["scheduler"] = AsyncHyperBandScheduler()
-        if args.algorithm != "ax":
-            tune_args["config"] = config_dict
+        if args.tune.algorithm != "ax":
+            tune_args["config"] = args.tune.config_dict
         analysis = tune.run(TrainClass, **tune_args)
 
         task_id = save_best.remote(analysis)
@@ -426,7 +402,7 @@ def main():
         print(f"[INFO TUN-0002] Best parameters found: {analysis.best_config}")
 
         # if all runs have failed
-        if analysis.best_result[METRIC] == ERROR_METRIC:
+        if analysis.best_result[args.metric] == args.error_metric:
             print("[ERROR TUN-0016] No successful runs found.")
             sys.exit(16)
     elif args.mode == "sweep":

@@ -1,12 +1,15 @@
 import argparse
+import os
 from multiprocessing import cpu_count
 
 import numpy as np
 
-from autotuner.core.config import Settings, SweepConfig, TuneConfig
+from autotuner.core.config import Settings, SweepConfig, TuneConfig, TuneEvalValue
+from autotuner.utils import prepare_ray_server, read_config
 
 
-def convert_to_settings(args_dict: dict):
+def convert_to_settings(args_dict: dict) -> Settings:
+    """Convert a dictionary of arguments to a Settings object."""
     tune_keys = TuneConfig.model_fields.keys()
     sweep_keys = SweepConfig.model_fields.keys()
 
@@ -33,7 +36,7 @@ def convert_to_settings(args_dict: dict):
     return settings
 
 
-def parse_arguments():
+def parse_arguments() -> Settings:
     """
     Parse arguments from command line.
     """
@@ -186,9 +189,27 @@ def parse_arguments():
     )
 
     args = parser.parse_args()
-
-    # Validate using Pydantic!
     args_dict = vars(args)
+
+    # Process configs
+    config_dict, SDC_ORIGINAL, FR_ORIGINAL = read_config(
+        file_name=os.path.abspath(args.config), mode=args.mode, algorithm=args.algorithm
+    )
+    args_dict["config_dict"] = config_dict
+    args_dict["sdc_original"] = SDC_ORIGINAL
+    args_dict["fr_original"] = FR_ORIGINAL
+
+    # Process paths
+    LOCAL_DIR, ORFS_FLOW_DIR, INSTALL_PATH = prepare_ray_server(args)
+    args_dict["local_dir"] = LOCAL_DIR
+    args_dict["orfs_flow_dir"] = ORFS_FLOW_DIR
+    args_dict["install_path"] = INSTALL_PATH
+
+    # Process reference
+    if args.eval == TuneEvalValue.PPA_IMPROV:
+        args_dict["reference_dict"] = os.path.abspath(args.reference)
+
+    # Validate using Pydantic
     settings = convert_to_settings(args_dict)
 
     return settings
