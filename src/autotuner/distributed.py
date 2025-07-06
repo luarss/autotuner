@@ -82,12 +82,18 @@ from ray.util.queue import Queue
 
 from autotuner.cli import parse_arguments
 from autotuner.core.config import Settings
+from autotuner.core.exceptions import (
+    DistributedExecutionError,
+)
+from autotuner.core.logging import get_logger
 from autotuner.utils import (
     consumer,
     openroad,
     parse_config,
     read_metrics,
 )
+
+logger = get_logger(__name__)
 
 
 class AutoTunerBase(tune.Trainable):
@@ -99,28 +105,53 @@ class AutoTunerBase(tune.Trainable):
         """
         Setup current experiment step.
         """
-        # We create the following directory structure:
-        #      1/     2/         3/       4/           5/
-        # <repo>/<logs>/<platform>/<design>/<experiment/<cwd>
-        if settings is None:
-            raise ValueError("[ERROR TUN-0004] Settings must be provided.")
-        self.settings = settings
-        local_dir_str = str(self.settings.local_dir) if self.settings.local_dir is not None else ""
-        self.repo_dir = os.path.abspath(os.path.join(local_dir_str, *[".."] * 4))
-        self.parameters = parse_config(
-            config=config,
-            platform=self.settings.platform,
-            sdc_original=self.settings.sdc_original,
-            constraints_sdc=self.settings.constraints_sdc,
-            fr_original=self.settings.fr_original,
-            fastroute_tcl=self.settings.fastroute_tcl,
-            path=os.getcwd(),
-        )
-        self.step_ = 0
-        self.variant = f"variant-{self.__class__.__name__}-{self.trial_id}-or"
-        # Do a valid config check here, since we still have the config in a
-        # dict vs. having to scan through the parameter string later
-        self.is_valid_config = self._is_valid_config(config)
+        logger.debug("Setting up AutoTuner experiment", extra={"trial_id": getattr(self, "trial_id", "unknown")})
+
+        try:
+            # We create the following directory structure:
+            #      1/     2/         3/       4/           5/
+            # <repo>/<logs>/<platform>/<design>/<experiment/<cwd>
+            if settings is None:
+                logger.error("Settings not provided to AutoTuner setup")
+                raise DistributedExecutionError("[ERROR TUN-0004] Settings must be provided.")
+
+            self.settings = settings
+            local_dir_str = str(self.settings.local_dir) if self.settings.local_dir is not None else ""
+            self.repo_dir = os.path.abspath(os.path.join(local_dir_str, *[".."] * 4))
+
+            self.parameters = parse_config(
+                config=config,
+                platform=self.settings.platform,
+                sdc_original=self.settings.sdc_original,
+                constraints_sdc=self.settings.constraints_sdc,
+                fr_original=self.settings.fr_original,
+                fastroute_tcl=self.settings.fastroute_tcl,
+                path=os.getcwd(),
+            )
+
+            self.step_ = 0
+            self.variant = f"variant-{self.__class__.__name__}-{self.trial_id}-or"
+
+            # Do a valid config check here, since we still have the config in a
+            # dict vs. having to scan through the parameter string later
+            self.is_valid_config = self._is_valid_config(config)
+
+            logger.info(
+                "AutoTuner experiment setup completed",
+                extra={
+                    "trial_id": self.trial_id,
+                    "variant": self.variant,
+                    "valid_config": self.is_valid_config,
+                    "platform": self.settings.platform,
+                    "design": self.settings.design,
+                },
+            )
+
+        except Exception as e:
+            logger.error("Failed to setup AutoTuner experiment", exc_info=True)
+            if isinstance(e, DistributedExecutionError):
+                raise
+            raise DistributedExecutionError(f"Failed to setup experiment: {str(e)}") from e
 
     def step(self):
         """

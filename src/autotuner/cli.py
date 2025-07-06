@@ -1,45 +1,61 @@
 import argparse
 import os
+import sys
 from multiprocessing import cpu_count
 
 import numpy as np
 
 from autotuner.core.config import Settings, SweepConfig, TuneConfig, TuneEvalFunction
+from autotuner.core.exceptions import ConfigurationError, FileOperationError, ValidationError
+from autotuner.core.logging import get_logger
 from autotuner.utils import prepare_ray_server, read_config
+
+logger = get_logger(__name__)
 
 
 def convert_to_settings(args_dict: dict) -> Settings:
     """Convert a dictionary of arguments to a Settings object."""
-    tune_keys = TuneConfig.model_fields.keys()
-    sweep_keys = SweepConfig.model_fields.keys()
+    logger.debug("Converting arguments to Settings object", extra={"args_keys": list(args_dict.keys())})
 
-    settings_dict = {
-        "design": args_dict["design"],
-        "platform": args_dict["platform"],
-        "experiment": args_dict["experiment"],
-        "timeout": args_dict["timeout"],
-        "verbose": args_dict["verbose"],
-        "jobs": args_dict["jobs"],
-        "openroad_threads": args_dict["openroad_threads"],
-        "server": args_dict["server"],
-        "port": args_dict["port"],
-        "mode": args_dict["mode"],
-    }
-    if args_dict["mode"] == "tune":
-        settings_dict["tune"] = {key: args_dict[key] for key in tune_keys if key in args_dict}
-    elif args_dict["mode"] == "sweep":
-        settings_dict["sweep"] = {key: args_dict[key] for key in sweep_keys if key in args_dict}
-    else:
-        raise ValueError(f"Unknown mode: {args_dict['mode']}")
+    try:
+        tune_keys = TuneConfig.model_fields.keys()
+        sweep_keys = SweepConfig.model_fields.keys()
 
-    settings = Settings.model_validate(settings_dict)
-    return settings
+        settings_dict = {
+            "design": args_dict["design"],
+            "platform": args_dict["platform"],
+            "experiment": args_dict["experiment"],
+            "timeout": args_dict["timeout"],
+            "verbose": args_dict["verbose"],
+            "jobs": args_dict["jobs"],
+            "openroad_threads": args_dict["openroad_threads"],
+            "server": args_dict["server"],
+            "port": args_dict["port"],
+            "mode": args_dict["mode"],
+        }
+        if args_dict["mode"] == "tune":
+            settings_dict["tune"] = {key: args_dict[key] for key in tune_keys if key in args_dict}
+        elif args_dict["mode"] == "sweep":
+            settings_dict["sweep"] = {key: args_dict[key] for key in sweep_keys if key in args_dict}
+        else:
+            logger.error("Unknown mode specified", extra={"mode": args_dict["mode"]})
+            raise ConfigurationError(f"Unknown mode: {args_dict['mode']}")
+
+        settings = Settings.model_validate(settings_dict)
+        logger.info("Settings created successfully", extra={"mode": settings.mode, "design": settings.design})
+        return settings
+    except Exception as e:
+        logger.error("Failed to convert arguments to Settings", exc_info=True)
+        if isinstance(e, ConfigurationError | ValidationError):
+            raise
+        raise ConfigurationError(f"Failed to process configuration: {str(e)}") from e
 
 
 def parse_arguments() -> Settings:
     """
     Parse arguments from command line.
     """
+    logger.debug("Starting argument parsing")
     parser = argparse.ArgumentParser()
 
     subparsers = parser.add_subparsers(help="mode of execution", dest="mode", required=True)
@@ -75,7 +91,7 @@ def parse_arguments() -> Settings:
         type=str,
         metavar="<str>",
         default="test",
-        help="Experiment name. This parameter is used to prefix the FLOW_VARIANT and to set the Ray log destination.",
+        helper="Experiment name. This parameter is used to prefix the FLOW_VARIANT and to set the Ray log destination.",
     )
     parser.add_argument(
         "--timeout",
@@ -188,38 +204,81 @@ def parse_arguments() -> Settings:
         " training stderr\n\t2: also print training stdout.",
     )
 
+    # Parse arguments
     args = parser.parse_args()
     args_dict = vars(args)
+    logger.debug("Arguments parsed successfully", extra={"mode": args.mode, "design": args.design})
 
-    # Process configs
-    config_dict, SDC_ORIGINAL, FR_ORIGINAL = read_config(
-        file_name=os.path.abspath(args.config), mode=args.mode, algorithm=args.algorithm
-    )
-    args_dict["config_dict"] = config_dict
-    args_dict["sdc_original"] = SDC_ORIGINAL
-    args_dict["fr_original"] = FR_ORIGINAL
+    # Process configuration file
+    config_dict, SDC_ORIGINAL, FR_ORIGINAL = _process_config(args.config, args.mode, getattr(args, "algorithm", None))
+    args_dict.update({"config_dict": config_dict, "sdc_original": SDC_ORIGINAL, "fr_original": FR_ORIGINAL})
 
     # Process paths
-    LOCAL_DIR, ORFS_FLOW_DIR, INSTALL_PATH = prepare_ray_server(args)
-    args_dict["local_dir"] = LOCAL_DIR
-    args_dict["orfs_flow_dir"] = ORFS_FLOW_DIR
-    args_dict["install_path"] = INSTALL_PATH
+    LOCAL_DIR, ORFS_FLOW_DIR, INSTALL_PATH = _process_paths(args)
+    args_dict.update({"local_dir": LOCAL_DIR, "orfs_flow_dir": ORFS_FLOW_DIR, "install_path": INSTALL_PATH})
 
-    # Process reference
-    if args.eval == TuneEvalFunction.PPA_IMPROV:
-        args_dict["reference_dict"] = os.path.abspath(args.reference)
+    # Process reference file if needed
+    if hasattr(args, "eval") and args.eval == TuneEvalFunction.PPA_IMPROV:
+        reference_path = _process_reference(args.reference)
+        args_dict["reference_dict"] = reference_path
 
-    # Validate using Pydantic
+    # Convert to settings and validate
     settings = convert_to_settings(args_dict)
-
+    logger.info("Argument parsing completed successfully", extra={"experiment": settings.experiment})
     return settings
 
 
-def main():
-    settings = parse_arguments()
+def _process_config(config_file: str, mode: str, algorithm: str | None = None) -> tuple:
+    """Process configuration file and return config data."""
+    try:
+        config_dict, SDC_ORIGINAL, FR_ORIGINAL = read_config(
+            file_name=os.path.abspath(config_file), mode=mode, algorithm=algorithm
+        )
+        logger.debug("Configuration processed successfully", extra={"config_file": config_file})
+        return config_dict, SDC_ORIGINAL, FR_ORIGINAL
+    except Exception as e:
+        logger.error("Failed to process configuration file", extra={"config_file": config_file}, exc_info=True)
+        raise ConfigurationError(f"Failed to process configuration file '{config_file}': {str(e)}") from e
 
-    # Pretty print pydantic settings
-    print(settings.model_dump_json(indent=2))
+
+def _process_paths(args) -> tuple:
+    """Process Ray server paths."""
+    try:
+        LOCAL_DIR, ORFS_FLOW_DIR, INSTALL_PATH = prepare_ray_server(args)
+        logger.debug("Paths processed successfully", extra={"local_dir": LOCAL_DIR, "orfs_flow_dir": ORFS_FLOW_DIR})
+        return LOCAL_DIR, ORFS_FLOW_DIR, INSTALL_PATH
+    except Exception as e:
+        logger.error("Failed to prepare Ray server paths", exc_info=True)
+        raise FileOperationError(f"Failed to prepare Ray server paths: {str(e)}") from e
+
+
+def _process_reference(reference_file: str) -> str:
+    """Process reference file for PPA improvement evaluation."""
+    if not reference_file:
+        logger.error("Reference file required for PPA improvement evaluation")
+        raise ConfigurationError("Reference file is required when using PPA improvement evaluation")
+
+    reference_path = os.path.abspath(reference_file)
+    logger.debug("Reference file processed", extra={"reference_file": reference_file})
+    return reference_path
+
+
+def main():
+    try:
+        logger.info("Starting AutoTuner CLI")
+        settings = parse_arguments()
+
+        # Pretty print pydantic settings
+        print(settings.model_dump_json(indent=2))
+        logger.info("AutoTuner CLI completed successfully")
+    except (ConfigurationError, ValidationError, FileOperationError) as e:
+        logger.error(f"Configuration error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        logger.error("Unexpected error in main", exc_info=True)
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,12 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, DirectoryPath, Field, FilePath, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .exceptions import ConfigurationError, ValidationError
+from .logging import get_logger
+
 load_dotenv()
+
+logger = get_logger(__name__)
 
 
 class TuneEvalFunction(Enum):
@@ -31,7 +36,8 @@ class TuneConfig(BaseModel):
     @model_validator(mode="after")
     def check_ppa_improve_requires_reference(self) -> Self:
         if self.eval == "ppa-improv" and not self.reference:
-            raise ValueError("[ERROR TUN-0006] PPAImprov requires a reference file.")
+            logger.error("PPA improvement evaluation requires reference file but none provided")
+            raise ValidationError("[ERROR TUN-0006] PPAImprov requires a reference file.")
         return self
 
 
@@ -74,8 +80,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def check_resume_requires_experiment(self) -> Self:
-        if self.mode == "tune" and self.tune.resume and not self.experiment == "":
-            raise ValueError("[ERROR TUN-0031] Resume requires a non-default experiment name to be set.")
+        if self.mode == "tune" and self.tune.resume and self.experiment == "test":
+            logger.error("Resume requires non-default experiment name", extra={"current_experiment": self.experiment})
+            raise ValidationError("[ERROR TUN-0031] Resume requires a non-default experiment name to be set.")
         return self
 
     @model_validator(mode="after")
@@ -85,12 +92,23 @@ class Settings(BaseSettings):
         - If the name is "default", creates a new name like "mode-uuid".
         - If a custom name is provided, appends "-mode" to it.
         """
-        default_experiment_name = self.model_fields["experiment"].default
+        try:
+            default_experiment_name = Settings.model_fields["experiment"].default
+            original_name = self.experiment
 
-        if self.experiment == default_experiment_name:
-            unique_id = str(uuid.uuid4())[:8]
-            self.experiment = f"{self.mode}-{unique_id}"
-        else:
-            self.experiment = f"{self.experiment}-{self.mode}"
+            if self.experiment == default_experiment_name:
+                unique_id = str(uuid.uuid4())[:8]
+                self.experiment = f"{self.mode}-{unique_id}"
+                logger.debug(
+                    "Generated experiment name", extra={"original": original_name, "generated": self.experiment}
+                )
+            else:
+                self.experiment = f"{self.experiment}-{self.mode}"
+                logger.debug(
+                    "Processed experiment name", extra={"original": original_name, "processed": self.experiment}
+                )
 
-        return self
+            return self
+        except Exception as e:
+            logger.error("Failed to process experiment name", exc_info=True)
+            raise ConfigurationError(f"Failed to process experiment name: {str(e)}") from e
