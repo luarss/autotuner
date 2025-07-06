@@ -7,3 +7,7 @@ format:
 check:
 	@ruff check
 	@pre-commit run --all-files
+
+.PHONY: test
+test:
+	@pytest

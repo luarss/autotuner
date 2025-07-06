@@ -74,9 +74,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def check_resume_requires_experiment(self) -> Self:
-        if self.mode == "tune":
-            if self.tune.resume and not self.experiment == "":
-                raise ValueError("[ERROR TUN-0031] Resume requires a non-default experiment name to be set.")
+        if self.mode == "tune" and self.tune.resume and not self.experiment == "":
+            raise ValueError("[ERROR TUN-0031] Resume requires a non-default experiment name to be set.")
         return self
 
     @model_validator(mode="after")
