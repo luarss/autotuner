@@ -19,6 +19,8 @@ from .exceptions import (
     ParameterError,
     ValidationError,
 )
+from .interfaces import Algorithm, Evaluator, Runner
+from .injection import container, DIContainer, get_algorithm, get_evaluator, get_runner
 from .logging import AutoTunerLogger, get_logger
 
 __version__ = "0.0.1"

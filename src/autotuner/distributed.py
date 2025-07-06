@@ -66,6 +66,7 @@ import sys
 from collections import namedtuple
 from itertools import product
 from multiprocessing import cpu_count
+from typing import Any
 
 import numpy as np
 import ray
@@ -85,6 +86,7 @@ from autotuner.core.config import Settings
 from autotuner.core.exceptions import (
     DistributedExecutionError,
 )
+from autotuner.core.interfaces import Evaluator
 from autotuner.core.logging import get_logger
 from autotuner.utils import (
     consumer,
@@ -96,7 +98,7 @@ from autotuner.utils import (
 logger = get_logger(__name__)
 
 
-class AutoTunerBase(tune.Trainable):
+class AutoTunerBase(tune.Trainable, Evaluator):
     """
     AutoTuner base class for experiments.
     """
@@ -170,7 +172,7 @@ class AutoTunerBase(tune.Trainable):
             install_path=self.settings.install_path,
         )
         self.step_ += 1
-        (score, effective_clk_period, num_drc) = self.evaluate(read_metrics(metrics_file))
+        (score, effective_clk_period, num_drc) = self._evaluate_metrics(read_metrics(metrics_file))
         # Feed the score back to Tune.
         # return must match 'metric' used in tune.run()
         return {
@@ -179,9 +181,41 @@ class AutoTunerBase(tune.Trainable):
             "num_drc": num_drc,
         }
 
-    def evaluate(self, metrics):
+    def evaluate(self, config: dict[str, Any]) -> dict[str, float | int]:
         """
-        User-defined evaluation function.
+        Evaluate a configuration and return metrics.
+        This is the interface-compliant method that runs the actual OpenROAD flow.
+        """
+        # Run the OpenROAD flow and get metrics
+        metrics_file = openroad(
+            args=self.settings,
+            base_dir=self.repo_dir,
+            parameters=parse_config(
+                config=config,
+                platform=self.settings.platform,
+                sdc_original=self.settings.sdc_original,
+                constraints_sdc=self.settings.constraints_sdc,
+                fr_original=self.settings.fr_original,
+                fastroute_tcl=self.settings.fastroute_tcl,
+                path=os.getcwd(),
+            ),
+            flow_variant=f"{self.variant}-{self.step_}",
+            install_path=self.settings.install_path,
+        )
+        metrics = read_metrics(metrics_file)
+        (score, effective_clk_period, num_drc) = self._evaluate_metrics(metrics)
+        # Ensure all values are numeric for interface compliance
+        return {
+            self.settings.metric: float(score) if isinstance(score, int | float) else self.settings.error_metric,
+            "effective_clk_period": float(effective_clk_period)
+            if isinstance(effective_clk_period, int | float)
+            else self.settings.error_metric,
+            "num_drc": int(num_drc) if isinstance(num_drc, (int | float)) else int(self.settings.error_metric),
+        }
+
+    def _evaluate_metrics(self, metrics):
+        """
+        User-defined evaluation function for processing metrics.
         It can change in any form to minimize the score (return value).
         Default evaluation function optimizes effective clock period.
         """
@@ -205,6 +239,29 @@ class AutoTunerBase(tune.Trainable):
         ret_val = True
         ret_val &= self._is_valid_padding(config)
         return ret_val
+
+    def set_metric(self, metric_name: str, mode: str = "min") -> None:
+        """Set the primary metric for evaluation.
+
+        Args:
+            metric_name: Name of the metric to optimize
+            mode: Optimization mode ("min" for minimize, "max" for maximize)
+        """
+        if hasattr(self, "settings") and self.settings:
+            self.settings.metric = metric_name
+            # Store the optimization mode for use in evaluation
+            if not hasattr(self, "_metric_mode"):
+                self._metric_mode = mode
+            else:
+                self._metric_mode = mode
+
+    def get_evaluation_results(self) -> list[dict]:
+        """Get all evaluation results."""
+        return []
+
+    def setup_evaluation_environment(self) -> None:
+        """Set up the evaluation environment."""
+        pass
 
     def _is_valid_padding(self, config):
         """Returns True if global padding >= detail padding"""
@@ -260,7 +317,39 @@ class PPAImprov(AutoTunerBase):
         ppa += area * coeff_area
         return ppa_upper_bound - ppa
 
-    def evaluate(self, metrics):
+    def evaluate(self, config: dict[str, Any]) -> dict[str, float | int]:
+        """
+        Evaluate a configuration and return PPA metrics.
+        This is the interface-compliant method that runs the actual OpenROAD flow.
+        """
+        # Run the OpenROAD flow and get metrics
+        metrics_file = openroad(
+            args=self.settings,
+            base_dir=self.repo_dir,
+            parameters=parse_config(
+                config=config,
+                platform=self.settings.platform,
+                sdc_original=self.settings.sdc_original,
+                constraints_sdc=self.settings.constraints_sdc,
+                fr_original=self.settings.fr_original,
+                fastroute_tcl=self.settings.fastroute_tcl,
+                path=os.getcwd(),
+            ),
+            flow_variant=f"{self.variant}-{self.step_}",
+            install_path=self.settings.install_path,
+        )
+        metrics = read_metrics(metrics_file)
+        (score, effective_clk_period, num_drc) = self._evaluate_metrics(metrics)
+        # Ensure all values are numeric for interface compliance
+        return {
+            self.settings.metric: float(score) if isinstance(score, int | float) else self.settings.error_metric,
+            "effective_clk_period": float(effective_clk_period)
+            if isinstance(effective_clk_period, int | float)
+            else self.settings.error_metric,
+            "num_drc": int(num_drc) if isinstance(num_drc, int | float) else int(self.settings.error_metric),
+        }
+
+    def _evaluate_metrics(self, metrics):
         error = "ERR" in metrics.values() or "ERR" in self.settings.tune.reference_dict.values()
         not_found = "N/A" in metrics.values() or "N/A" in self.settings.tune.reference_dict.values()
         if error or not_found:
@@ -358,14 +447,14 @@ def set_training_class(settings: Settings):
 
 # TODO: Make this remote function take in arguments.
 @ray.remote
-def save_best(results):
+def save_best(results, metric: str, local_dir: str, experiment_name: str):
     """
     Save best configuration of parameters found.
     """
     best_config = results.best_config
-    best_config["best_result"] = results.best_result[METRIC]
+    best_config["best_result"] = results.best_result[metric]
     trial_id = results.best_trial.trial_id
-    new_best_path = f"{LOCAL_DIR}/{args.experiment}/"
+    new_best_path = f"{local_dir}/{experiment_name}/"
     new_best_path += f"autotuner-best-{trial_id}.json"
     with open(new_best_path, "w") as new_best_file:
         json.dump(best_config, new_best_file, indent=4)
@@ -437,7 +526,7 @@ def main():
             tune_args["config"] = args.tune.config_dict
         analysis = tune.run(TrainClass, **tune_args)
 
-        task_id = save_best.remote(analysis)
+        task_id = save_best.remote(analysis, args.metric, str(args.local_dir), args.experiment)
         _ = ray.get(task_id)
         print(f"[INFO TUN-0002] Best parameters found: {analysis.best_config}")
 
