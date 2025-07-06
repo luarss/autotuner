@@ -199,7 +199,7 @@ requires-dist = [
     { name = "ray", extras = ["default", "tune"], specifier = "==2.43.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "sqlalchemy", specifier = "==1.4.17" },
-    { name = "tensorboard", specifier = ">=2.14.0,<=2.16.2" },
+    { name = "tensorboard", specifier = ">=2.17.0" },
     { name = "urllib3", specifier = ">=1.26.17" },
 ]
 provides-extras = ["dev"]
@@ -2313,13 +2313,14 @@ wheels = [
 
 [[package]]
 name = "tensorboard"
-version = "2.16.2"
+version = "2.19.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "absl-py" },
     { name = "grpcio" },
     { name = "markdown" },
     { name = "numpy" },
+    { name = "packaging" },
     { name = "protobuf" },
     { name = "setuptools" },
     { name = "six" },
@@ -2327,7 +2328,7 @@ dependencies = [
     { name = "werkzeug" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3a/d0/b97889ffa769e2d1fdebb632084d5e8b53fc299d43a537acee7ec0c021a3/tensorboard-2.16.2-py3-none-any.whl", hash = "sha256:9f2b4e7dad86667615c0e5cd072f1ea8403fc032a299f0072d6f74855775cc45", size = 5490335 },
+    { url = "https://files.pythonhosted.org/packages/5d/12/4f70e8e2ba0dbe72ea978429d8530b0333f0ed2140cc571a48802878ef99/tensorboard-2.19.0-py3-none-any.whl", hash = "sha256:5e71b98663a641a7ce8a6e70b0be8e1a4c0c45d48760b076383ac4755c35b9a0", size = 5503412 },
 ]
 
 [[package]]
